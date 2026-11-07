@@ -1,6 +1,6 @@
 server.js const https = require('https');
 const http = require('http');
-const TOKEN = "skycastle%20panel_authtoken_d1ba2e21a9b5610c3a694803bdf51483";
+const TOKEN = "fps_85e40b6a63d1e460ed7ea27202db2449ebb31702ed8a368b5e0c743b214cafb1";
 
 function afk() {
   try {
