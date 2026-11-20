@@ -1,7 +1,7 @@
 const https = require('https');
 const http = require('http');
 
-const TOKEN = process.env.REMEMBER_TOKEN; // set this in Render > Environment
+const TOKEN = process.env.REMEMBER_TOKEN;
 if (!TOKEN) {
   console.error('[FATAL] REMEMBER_TOKEN env var is not set');
   process.exit(1);
@@ -42,32 +42,59 @@ function request(path, method, body) {
 
 async function checkStatus() {
   const r = await request('/api/user/billingafk/status', 'GET');
-  // Don't log the full body; it contains the injected ad script
   console.log(`[STATUS] http=${r.status} success=${r.json?.success} message=${r.json?.message}`);
   const d = r.json?.data;
   if (d) {
-    console.log(`[STATUS] credits_per_minute=${d.credits_per_minute} interval=${d.reward_interval_seconds}s`);
+    console.log(`[STATUS] session_active=${d.session_active} credits_per_minute=${d.credits_per_minute} interval=${d.reward_interval_seconds}s`);
   }
   return r;
 }
 
-async function afk() {
-  const r = await request('/api/user/billingafk/work', 'POST', { minutes_afk: 1 });
-  console.log(
-    `[AFK] ${new Date().toISOString()} | http=${r.status} | success=${r.json?.success} | message=${r.json?.message ?? r.raw.slice(0, 200)}`
-  );
+async function startSession() {
+  const r = await request('/api/user/billingafk/start', 'POST', {});
+  console.log(`[START] http=${r.status} success=${r.json?.success} message=${r.json?.message ?? r.raw.slice(0, 150)}`);
   if (r.status === 401 || r.status === 403) {
-    console.log('[AFK] Auth rejected: token is probably expired. Get a fresh remember_token.');
+    console.log('[START] Auth rejected or AFK disabled / already limited.');
   }
+  return r;
+}
+
+async function work() {
+  const r = await request('/api/user/billingafk/work', 'POST', {});
+  console.log(
+    `[WORK] ${new Date().toISOString()} | http=${r.status} | success=${r.json?.success} | message=${r.json?.message ?? r.raw.slice(0, 200)}`
+  );
+
+  if (r.status === 401 || r.status === 403) {
+    const code = r.json?.error_code || r.json?.code;
+    if (code === 'NO_ACTIVE_SESSION') {
+      console.log('[WORK] No active session — starting one...');
+      await startSession();
+    } else {
+      console.log('[WORK] Auth rejected / disabled. Token may be expired.');
+    }
+  }
+
+  if (r.status === 429) {
+    console.log('[WORK] Rate limited (need ≥60s between calls) or daily/session limit hit.');
+  }
+
+  return r;
 }
 
 async function loop() {
-  await afk();
-  setTimeout(loop, 61000); // chained, so requests never overlap
+  await work();
+  // 61s+ to stay safely above the 60s server-side rate limit
+  setTimeout(loop, 65000);
 }
 
-console.log(`[START] ${new Date().toISOString()}`);
-checkStatus().then(loop);
+console.log(`[BOOT] ${new Date().toISOString()}`);
+
+(async () => {
+  await checkStatus();
+  await startSession();
+  loop();
+})();
 
 http
   .createServer((q, s) => s.end('alive'))
